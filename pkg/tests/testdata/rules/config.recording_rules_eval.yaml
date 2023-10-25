@@ -1,5 +1,0 @@
-global:
-  evaluation_interval: 100ms
-
-rule_files:
-- rules.yaml

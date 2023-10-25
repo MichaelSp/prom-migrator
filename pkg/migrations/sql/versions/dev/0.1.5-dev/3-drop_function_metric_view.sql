@@ -1,1 +1,0 @@
-DROP FUNCTION IF EXISTS _prom_catalog.metric_view() CASCADE;

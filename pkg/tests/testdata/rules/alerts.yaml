@@ -1,5 +1,0 @@
-groups:
-- name: promscale-general
-  rules:
-  - alert: Test
-    expr: absent(up)

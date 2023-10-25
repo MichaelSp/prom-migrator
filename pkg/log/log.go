@@ -2,15 +2,14 @@
 // Please see the included NOTICE for copyright information and
 // LICENSE for a copy of the license
 
-// Package log creates logs in the same way as Prometheus, while ignoring errors
+// This package is a copy of https://github.com/timescale/promscale/blob/819fcae5a31a30669570c38d8afd6873b284cdf0/pkg/log/log.go#L1
+// We maintain a copy to avoid importing Promscale modules, which if imported, will cause a panic for duplicate proto enum registration.
+
 package log
 
 import (
-	"flag"
 	"fmt"
 	"os"
-	"strconv"
-	"sync"
 	"time"
 
 	"github.com/go-kit/log"
@@ -18,17 +17,12 @@ import (
 )
 
 var (
-	// Application wide logger
-	logger log.Logger = log.NewNopLogger()
-
+	logger = log.NewNopLogger()
 	// logger timestamp format
 	timestampFormat = log.TimestampFormat(
 		func() time.Time { return time.Now().UTC() },
 		"2006-01-02T15:04:05.000Z07:00",
 	)
-
-	logMux   sync.RWMutex
-	logStore = make(map[key][]interface{})
 )
 
 // Config represents a logger configuration used upon initialization.
@@ -37,45 +31,9 @@ type Config struct {
 	Format string
 }
 
-// ParseFlags parses the configuration flags for logging.
-func ParseFlags(fs *flag.FlagSet, cfg *Config) *Config {
-	fs.StringVar(&cfg.Level, "telemetry.log.level", "info", "Log level to use from [ 'error', 'warn', 'info', 'debug' ].")
-	fs.StringVar(&cfg.Format, "telemetry.log.format", "logfmt", "The log format to use [ 'logfmt', 'json' ].")
-	return cfg
-}
-
-func shouldLog() bool {
-	value := os.Getenv("PROMSCALE_LOGGING")
-	enabled, err := strconv.ParseBool(value)
-	if err != nil {
-		// If we cannot parse, then assume to continue logging.
-		return true
-	}
-	return enabled
-}
-
-// InitDefault is used to start the logger with sane defaults before we can configure it.
-// It's useful in instances where we want to log stuff before the configuration
-// has been successfully parsed. Calling Init function later on overrides this.
-func InitDefault() {
-	if !shouldLog() {
-		logger = log.NewNopLogger()
-		return
-	}
-	l := level.NewFilter(
-		log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
-		level.AllowInfo(),
-	)
-	logger = log.With(l, "ts", timestampFormat, "caller", log.Caller(4))
-}
-
 // Init starts logging given the configuration. By default, it uses logfmt format
 // and minimum logging level.
 func Init(cfg Config) error {
-	if !shouldLog() {
-		logger = log.NewNopLogger()
-		return nil
-	}
 	var l log.Logger
 	switch cfg.Format {
 	case "logfmt", "":
@@ -141,67 +99,4 @@ func parseLogLevel(logLevel string) (level.Option, error) {
 	default:
 		return nil, fmt.Errorf("unrecognized log level %q", logLevel)
 	}
-}
-
-const (
-	logOnceTimedDuration = time.Minute
-
-	debug = iota
-	warn
-)
-
-// timedLogger logs from logStore every logOnceTimedDuration. It deletes the log entry from the store
-// after it has logged once.
-func timedLogger() {
-	time.Sleep(logOnceTimedDuration)
-	applyKind := func(logMsg []interface{}) (newLogMsg []interface{}) {
-		newLogMsg = append(newLogMsg, "kind", "rate-limited", "duration", logOnceTimedDuration.String())
-		newLogMsg = append(newLogMsg, logMsg...)
-		return
-	}
-	logMux.Lock()
-	defer logMux.Unlock()
-	for k, line := range logStore {
-		switch k.typ {
-		case debug:
-			Debug(applyKind(line)...)
-		case warn:
-			Warn(applyKind(line)...)
-		default:
-			panic("invalid type")
-		}
-	}
-	logStore = make(map[key][]interface{}) // Clear stale logs.
-}
-
-type key struct {
-	typ uint8
-	k   string
-}
-
-func rateLimit(typ uint8, keyvals ...interface{}) {
-	kv := fmt.Sprintf("%v", keyvals)
-	k := key{typ, kv}
-	logMux.RLock()
-	_, contains := logStore[k]
-	logMux.RUnlock()
-	if contains {
-		return
-	}
-	logMux.Lock()
-	defer logMux.Unlock()
-	if len(logStore) == 0 {
-		go timedLogger()
-	}
-	logStore[k] = keyvals
-}
-
-// WarnRateLimited warns once in every logOnceTimedDuration.
-func WarnRateLimited(keyvals ...interface{}) {
-	rateLimit(warn, keyvals...)
-}
-
-// DebugRateLimited logs Debug level logs once in every logOnceTimedDuration.
-func DebugRateLimited(keyvals ...interface{}) {
-	rateLimit(debug, keyvals...)
 }
